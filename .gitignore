@@ -1,0 +1,6 @@
+.DS_Store
+local.sh
+deploy.sh
+multisig*
+configs/yml.go
+database_*.go
