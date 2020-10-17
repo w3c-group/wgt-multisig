@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MixinNetwork/bot-api-go-client"
-	"github.com/MixinNetwork/go-number"
+	bot "github.com/MixinNetwork/bot-api-go-client"
+	number "github.com/MixinNetwork/go-number"
 	"github.com/MixinNetwork/mixin/common"
 	"github.com/MixinNetwork/mixin/crypto"
 )
@@ -56,7 +56,7 @@ func LoopingSignMultisig(ctx context.Context) error {
 			session.Logger(ctx).Errorf("handleMultisig %#v", err)
 			continue
 		}
-		time.Sleep(10 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 }
 

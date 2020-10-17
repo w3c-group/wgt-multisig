@@ -73,7 +73,7 @@ func findPaymentByID(ctx context.Context, paymentID string) (*Payment, error) {
 
 	var payments []*Payment
 
-	err := session.Database(ctx).Find(&payments, badgerhold.Where("PaymentId").Eq(paymentID))
+	err := session.Database(ctx).Find(&payments, badgerhold.Where("PaymentID").Eq(paymentID))
 	var p *Payment
 	if len(payments) > 0 {
 		p = payments[0]
@@ -122,7 +122,7 @@ func LoopingPendingPayments(ctx context.Context) error {
 				continue
 			}
 			if botPayment.Status == PaymentStatePaid {
-				session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentId").Eq(payment.PaymentID), func(record interface{}) error {
+				session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentID").Eq(payment.PaymentID), func(record interface{}) error {
 					update, ok := record.(*Payment)
 					if !ok {
 						err = fmt.Errorf("Record isn't the correct type! Got %T", record)
@@ -156,6 +156,7 @@ func LoopingPaidPayments(ctx context.Context) error {
 			continue
 		}
 		for _, payment := range payments {
+			// TODO sign daily
 			err = payment.refund(ctx, network)
 			if err != nil {
 				time.Sleep(time.Second)
@@ -175,9 +176,9 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 	if err != nil || input == nil {
 		return err
 	}
-	if payment.RawTransaction.String != input.SignedTx {
+	if payment.RawTransaction.String == "" || payment.RawTransaction.String != input.SignedTx {
 		payment.RawTransaction = sql.NullString{String: input.SignedTx, Valid: true}
-		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentId").Eq(payment.PaymentID), func(record interface{}) error {
+		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentID").Eq(payment.PaymentID), func(record interface{}) error {
 			update, ok := record.(*Payment)
 			if !ok {
 				err = fmt.Errorf("Record isn't the correct type! Got %T", record)
@@ -215,7 +216,7 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 				return err
 			}
 		}
-		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentId").Eq(payment.PaymentID), func(record interface{}) error {
+		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentID").Eq(payment.PaymentID), func(record interface{}) error {
 			update, ok := record.(*Payment)
 			if !ok {
 				err = fmt.Errorf("Record isn't the correct type! Got %T", record)
@@ -245,7 +246,7 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 	if payment.RawTransaction.String != request.RawTransaction {
 		payment.TransactionHash = sql.NullString{String: request.TransactionHash, Valid: true}
 		payment.RawTransaction = sql.NullString{String: request.RawTransaction, Valid: true}
-		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentId").Eq(payment.PaymentID), func(record interface{}) error {
+		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentID").Eq(payment.PaymentID), func(record interface{}) error {
 			update, ok := record.(*Payment)
 			if !ok {
 				err = fmt.Errorf("Record isn't the correct type! Got %T", record)
@@ -280,7 +281,7 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 			return err
 		}
 	}
-	session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentId").Eq(payment.PaymentID), func(record interface{}) error {
+	session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentID").Eq(payment.PaymentID), func(record interface{}) error {
 		update, ok := record.(*Payment)
 		if !ok {
 			err = fmt.Errorf("Record isn't the correct type! Got %T", record)
