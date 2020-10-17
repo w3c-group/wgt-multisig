@@ -2,7 +2,6 @@ package models
 
 import (
 	"context"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -36,8 +35,8 @@ type Payment struct {
 	Memo            string         `db:"memo"`
 	State           string         `db:"state"`
 	CodeID          string         `db:"code_id"`
-	TransactionHash sql.NullString `db:"transaction_hash"`
-	RawTransaction  sql.NullString `db:"raw_transaction"`
+	TransactionHash string         `db:"transaction_hash"`
+	RawTransaction  string         `db:"raw_transaction"`
 	CreatedAt       time.Time      `db:"created_at"`
 }
 
@@ -55,11 +54,10 @@ func CreatedPayment(ctx context.Context, payment *bot.Payment) (*Payment, error)
 	}
 
 	old, err := findPaymentByID(ctx, p.PaymentID)
-	if err != nil || old != nil {
-		return nil, err
+	if err == nil || old == nil {
+		err = session.Database(ctx).Insert(p)
 	}
 
-	err = session.Database(ctx).Insert(p)
 	if err != nil {
 		return nil, session.TransactionError(ctx, err)
 	}
@@ -176,8 +174,8 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 	if err != nil || input == nil {
 		return err
 	}
-	if payment.RawTransaction.String == "" || payment.RawTransaction.String != input.SignedTx {
-		payment.RawTransaction = sql.NullString{String: input.SignedTx, Valid: true}
+	if payment.RawTransaction != input.SignedTx && input.SignedTx != "" {
+		payment.RawTransaction = input.SignedTx
 		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentID").Eq(payment.PaymentID), func(record interface{}) error {
 			update, ok := record.(*Payment)
 			if !ok {
@@ -192,7 +190,7 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 			return err
 		}
 	}
-	if !payment.RawTransaction.Valid {
+	if payment.RawTransaction == "" {
 		var raw = ""
 		if input.State == "signed" {
 			raw = input.SignedTx
@@ -222,14 +220,14 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 				err = fmt.Errorf("Record isn't the correct type! Got %T", record)
 				return err
 			}
-			update.RawTransaction = sql.NullString{String: raw, Valid: true}
+			update.RawTransaction = raw
 			return nil
 		})
 		if err != nil {
 			return err
 		}
 	}
-	request, err := bot.CreateMultisig(ctx, "sign", payment.RawTransaction.String, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
+	request, err := bot.CreateMultisig(ctx, "sign", payment.RawTransaction, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
 	if err != nil {
 		return err
 	}
@@ -243,9 +241,9 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 			return err
 		}
 	}
-	if payment.RawTransaction.String != request.RawTransaction {
-		payment.TransactionHash = sql.NullString{String: request.TransactionHash, Valid: true}
-		payment.RawTransaction = sql.NullString{String: request.RawTransaction, Valid: true}
+	if payment.RawTransaction != request.RawTransaction {
+		payment.TransactionHash = request.TransactionHash
+		payment.RawTransaction = request.RawTransaction
 		session.Database(ctx).UpdateMatching(&Payment{}, badgerhold.Where("PaymentID").Eq(payment.PaymentID), func(record interface{}) error {
 			update, ok := record.(*Payment)
 			if !ok {
@@ -262,7 +260,7 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 		}
 	}
 
-	data, err := hex.DecodeString(payment.RawTransaction.String)
+	data, err := hex.DecodeString(payment.RawTransaction)
 	if err != nil {
 		return err
 	}
@@ -274,9 +272,9 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 	if len(stx.Signatures) > 0 && len(stx.Signatures[0]) < int(payment.Threshold) {
 		return nil
 	}
-	tx, err := network.GetTransaction(payment.TransactionHash.String)
+	tx, err := network.GetTransaction(payment.TransactionHash)
 	if tx == nil {
-		_, err := network.SendRawTransaction(payment.RawTransaction.String)
+		_, err := network.SendRawTransaction(payment.RawTransaction)
 		if err != nil {
 			return err
 		}
