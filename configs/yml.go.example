@@ -3,7 +3,7 @@ package configs
 var dataInYML = `
 default: &default
   database:
-    name: multisig
+    name: multisig_prod
     path: ""
   mixin:
     receivers:
@@ -30,7 +30,5 @@ test:
 production:
   <<: *default
   database:
-    user: postgres
-    name: multisig_production
-    password: pas....ord
+    name: multisig_prod
 `

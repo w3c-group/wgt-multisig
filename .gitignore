@@ -1,6 +1,6 @@
 .DS_Store
 local.sh
 deploy.sh
-multisig*
+multisig_*
 configs/yml.go
 database_*.go
