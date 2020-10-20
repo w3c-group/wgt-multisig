@@ -2,7 +2,7 @@
 
 WGT 2 of 3 Multisig Server
 
-https://token.w3c.group/
+机器人 Mixin ID: 7000102241
 
 ### 用途介绍
 
@@ -13,15 +13,19 @@ W3 协作组的平台通证为 WGT，10% 预挖 90% 通过积分挖得，而积�
 ### 运行逻辑
 
 1.存放任意数额的 WGT
+
 Deposit
 
 2.发送挖矿请求，指定数量和账户
+
 New Proposal
 
 3.判断满足约定 rules 则通过签名并放币
+
 Approve
 
 4.重复 2 和 3
+
 http://localhost:9300/proposal?rule=GrowthLimit&symbol=wgt&amount=1&userId=1b99263c-5223-42d3-82bc-637e68afc66a
 
 ### 启动方式
