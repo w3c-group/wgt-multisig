@@ -43,7 +43,7 @@ func proposalHandler(w http.ResponseWriter, r *http.Request) {
 		status = "pending"
 	}
 
-	nowTime := uint64(time.Now().Unix())
+	nowTime := uint64(time.Now().UnixNano())
 
 	payload := &Proposal{
 		Symbol:    symbol,

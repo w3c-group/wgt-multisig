@@ -47,6 +47,30 @@ func ReadMultisig(ctx context.Context, amount, memo string) (*bot.MultisigUTXO, 
 	return nil, nil
 }
 
+func FilterMultisig(ctx context.Context, amount string) (*bot.MultisigUTXO, error) {
+	mixin := configs.AppConfig.Mixin
+	receivers := mixin.Receivers
+	receivers = append(receivers, mixin.AppID)
+	sort.Slice(receivers, func(i, j int) bool {
+		return receivers[i] < receivers[j]
+	})
+	receiverStr := strings.Join(receivers, ",")
+	outputs, err := bot.ReadMultisigs(ctx, 500, "", mixin.AppID, mixin.SessionID, mixin.PrivateKey)
+	if err != nil {
+		return nil, err
+	}
+	for _, output := range outputs {
+		members := output.Members
+		sort.Slice(members, func(i, j int) bool {
+			return members[i] < members[j]
+		})
+		if receiverStr == strings.Join(members, ",") && number.FromString(amount).Cmp(number.FromString(output.Amount)) <= 0 {
+			return output, nil
+		}
+	}
+	return nil, nil
+}
+
 func LoopingSignMultisig(ctx context.Context) error {
 	network := NewMixinNetwork("http://35.234.74.25:8239")
 	for {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	bot "github.com/MixinNetwork/bot-api-go-client"
+	number "github.com/MixinNetwork/go-number"
 	"github.com/MixinNetwork/mixin/common"
 	"github.com/lib/pq"
 	"github.com/timshannon/badgerhold"
@@ -19,7 +20,6 @@ const (
 	PaymentStatePending   = "pending"
 	PaymentStatePaid      = "paid"
 	PaymentStateDeposited = "deposited"
-	PaymentStateApproved  = "approved"
 
 	WGTAssetID      = "965e5c6e-434c-3fa9-b780-c50f43cd955c"
 	WGTMixinAssetID = "b9f49cf777dc4d03bc54cd1367eebca319f8603ea1ce18910d09e2c540c630d8"
@@ -295,19 +295,96 @@ func (payment *Payment) deposit(ctx context.Context, network *MixinNetwork) erro
 }
 
 func LoopingApprove(ctx context.Context) error {
+	network := NewMixinNetwork("http://35.234.74.25:8239")
 	for {
-
 		var proposals []*Proposal
-		session.Database(passCtx).Find(&proposals, badgerhold.Where("Status").Eq("pending"))
-		fmt.Println(proposals)
+		session.Database(passCtx).Find(&proposals, badgerhold.Where("Status").Eq("pending").Limit(1))
+		for _, proposal := range proposals {
+			approve(ctx, proposal, network)
+		}
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 }
 
-func (payment *Payment) approve(ctx context.Context, symbol, amount, userId string) error {
-	// read deposited and redo deposit
-	// PaymentStateDeposited
+func approve(ctx context.Context, proposal *Proposal, network *MixinNetwork) error {
+	mixin := configs.AppConfig.Mixin
+
+	input, err := FilterMultisig(ctx, proposal.Amount)
+	if err != nil || input == nil {
+		return err
+	}
+
+	receivers := mixin.Receivers
+	receivers = append(receivers, mixin.AppID)
+
+	key, err := bot.ReadGhostKeys(ctx, []string{proposal.UserId}, 0, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
+	keyMultisig, err := bot.ReadGhostKeys(ctx, receivers, 1, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
+	if err != nil {
+		return err
+	}
+	afterAmount := number.FromString(input.Amount).Sub(number.FromString(proposal.Amount))
+
+	outputs := []*Output{&Output{Mask: key.Mask, Keys: key.Keys, Amount: proposal.Amount, Script: "fffe01"}}
+	if afterAmount.String() > "0" {
+		outputs = append(outputs, &Output{Mask: keyMultisig.Mask, Keys: keyMultisig.Keys, Amount: afterAmount.String(), Script: "fffe02"})
+	}
+
+	tx := &Transaction{
+		Inputs:  []*Input{&Input{Hash: input.TransactionHash, Index: input.OutputIndex}},
+		Outputs: outputs,
+		Asset:   WGTMixinAssetID,
+	}
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return err
+	}
+	raw, err := buildTransaction(data)
+
+	if err != nil {
+		return err
+	}
+	request, err := bot.CreateMultisig(ctx, "sign", raw, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
+
+	if err != nil {
+		return err
+	}
+
+	dataRaw, err := hex.DecodeString(request.RawTransaction)
+	if err != nil {
+		return err
+	}
+	var stx common.SignedTransaction
+	err = common.MsgpackUnmarshal(dataRaw, &stx)
+
+	if err != nil {
+		return err
+	}
+	if len(stx.Signatures) > 0 && len(stx.Signatures[0]) < int(request.Threshold) {
+		return nil
+	}
+	txReqeust, err := network.GetTransaction(request.TransactionHash)
+	if txReqeust == nil {
+		rawTransaction := request.RawTransaction
+		if request.RawTransaction != input.SignedTx && input.SignedTx != "" {
+			rawTransaction = input.SignedTx
+		}
+		_, err := network.SendRawTransaction(rawTransaction)
+		if err != nil {
+			return err
+		}
+	}
+
+	session.Database(ctx).UpdateMatching(&Proposal{}, badgerhold.Where("CreatedAt").Eq(proposal.CreatedAt), func(record interface{}) error {
+		update, ok := record.(*Proposal)
+		if !ok {
+			err = fmt.Errorf("Record isn't the correct type! Got %T", record)
+			return err
+		}
+		update.Status = "done"
+		return nil
+	})
+
 	return nil
 }
 
