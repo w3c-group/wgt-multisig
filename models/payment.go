@@ -5,25 +5,24 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"multisig/configs"
 	"multisig/session"
 	"time"
 
 	bot "github.com/MixinNetwork/bot-api-go-client"
-	number "github.com/MixinNetwork/go-number"
 	"github.com/MixinNetwork/mixin/common"
 	"github.com/lib/pq"
 	"github.com/timshannon/badgerhold"
 )
 
 const (
-	PaymentStatePending = "pending"
-	PaymentStatePaid    = "paid"
-	PaymentStateRefund  = "refund"
+	PaymentStatePending   = "pending"
+	PaymentStatePaid      = "paid"
+	PaymentStateDeposited = "deposited"
+	PaymentStateApproved  = "approved"
 
-	CNBAssetID      = "965e5c6e-434c-3fa9-b780-c50f43cd955c"
-	CNBMixinAssetID = "b9f49cf777dc4d03bc54cd1367eebca319f8603ea1ce18910d09e2c540c630d8"
+	WGTAssetID      = "965e5c6e-434c-3fa9-b780-c50f43cd955c"
+	WGTMixinAssetID = "b9f49cf777dc4d03bc54cd1367eebca319f8603ea1ce18910d09e2c540c630d8"
 )
 
 type Payment struct {
@@ -86,7 +85,7 @@ func FindPaymentByMemo(ctx context.Context, memo string) (*Payment, error) {
 	}
 	var payments []*Payment
 
-	err := session.Database(ctx).Find(&payments, badgerhold.Where("Memo").Eq(memo).And("State").Eq("pending"))
+	err := session.Database(ctx).Find(&payments, badgerhold.Where("Memo").Eq(memo).And("State").Eq(PaymentStatePending))
 	var p *Payment
 	if len(payments) > 0 {
 		p = payments[0]
@@ -126,7 +125,7 @@ func LoopingPendingPayments(ctx context.Context) error {
 						err = fmt.Errorf("Record isn't the correct type! Got %T", record)
 						return err
 					}
-					update.State = "paid"
+					update.State = PaymentStatePaid
 
 					return nil
 				})
@@ -154,11 +153,10 @@ func LoopingPaidPayments(ctx context.Context) error {
 			continue
 		}
 		for _, payment := range payments {
-			// TODO sign daily
-			err = payment.refund(ctx, network)
+			err = payment.deposit(ctx, network)
 			if err != nil {
 				time.Sleep(time.Second)
-				session.Logger(ctx).Errorf("refund %#v", err)
+				session.Logger(ctx).Errorf("deposit %#v", err)
 				continue
 			}
 		}
@@ -168,7 +166,7 @@ func LoopingPaidPayments(ctx context.Context) error {
 	}
 }
 
-func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error {
+func (payment *Payment) deposit(ctx context.Context, network *MixinNetwork) error {
 	mixin := configs.AppConfig.Mixin
 	input, err := ReadMultisig(ctx, payment.Amount, payment.Memo)
 	if err != nil || input == nil {
@@ -196,14 +194,15 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 			raw = input.SignedTx
 		}
 		if raw == "" {
-			key, err := bot.ReadGhostKeys(ctx, []string{payment.Memo}, 0, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
+			key, err := bot.ReadGhostKeys(ctx, input.Members, 0, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
 			if err != nil {
 				return err
 			}
+			outputs := []*Output{&Output{Mask: key.Mask, Keys: key.Keys, Amount: payment.Amount, Script: "fffe01"}}
 			tx := &Transaction{
 				Inputs:  []*Input{&Input{Hash: input.TransactionHash, Index: input.OutputIndex}},
-				Outputs: []*Output{&Output{Mask: key.Mask, Keys: key.Keys, Amount: payment.Amount, Script: "fffe01"}},
-				Asset:   CNBMixinAssetID,
+				Outputs: outputs,
+				Asset:   WGTMixinAssetID,
 			}
 			data, err := json.Marshal(tx)
 			if err != nil {
@@ -228,9 +227,11 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 		}
 	}
 	request, err := bot.CreateMultisig(ctx, "sign", payment.RawTransaction, mixin.AppID, mixin.SessionID, mixin.PrivateKey)
+
 	if err != nil {
 		return err
 	}
+
 	if request.State == "initial" {
 		pin, err := bot.EncryptPIN(ctx, mixin.Pin, mixin.PinToken, mixin.SessionID, mixin.PrivateKey, uint64(time.Now().UnixNano()))
 		if err != nil {
@@ -241,6 +242,7 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 			return err
 		}
 	}
+
 	if payment.RawTransaction != request.RawTransaction {
 		payment.TransactionHash = request.TransactionHash
 		payment.RawTransaction = request.RawTransaction
@@ -266,6 +268,7 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 	}
 	var stx common.SignedTransaction
 	err = common.MsgpackUnmarshal(data, &stx)
+
 	if err != nil {
 		return err
 	}
@@ -285,13 +288,30 @@ func (payment *Payment) refund(ctx context.Context, network *MixinNetwork) error
 			err = fmt.Errorf("Record isn't the correct type! Got %T", record)
 			return err
 		}
-		update.State = "refund"
+		update.State = PaymentStateDeposited
 		return nil
 	})
 	return err
 }
 
-func HandleMessage(ctx context.Context, userID string) (string, error) {
+func LoopingApprove(ctx context.Context) error {
+	for {
+
+		var proposals []*Proposal
+		session.Database(passCtx).Find(&proposals, badgerhold.Where("Status").Eq("pending"))
+		fmt.Println(proposals)
+
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func (payment *Payment) approve(ctx context.Context, symbol, amount, userId string) error {
+	// read deposited and redo deposit
+	// PaymentStateDeposited
+	return nil
+}
+
+func HandleMessage(ctx context.Context, userID, amount string) (string, error) {
 	payment, err := FindPaymentByMemo(ctx, userID)
 	if err != nil {
 		return "", err
@@ -302,8 +322,6 @@ func HandleMessage(ctx context.Context, userID string) (string, error) {
 	mixin := configs.AppConfig.Mixin
 	receivers := mixin.Receivers
 	receivers = append(receivers, mixin.AppID)
-	rand.Seed(time.Now().UnixNano())
-	amount := number.FromString(fmt.Sprint(rand.Intn(10000))).Div(number.FromString("10000")).Persist()
 	om := struct {
 		Receivers []string `json:"receivers"`
 		Threshold int64    `json:"threshold"`
@@ -311,7 +329,7 @@ func HandleMessage(ctx context.Context, userID string) (string, error) {
 		receivers, 2,
 	}
 	pr := &bot.PaymentRequest{
-		AssetId:          CNBAssetID,
+		AssetId:          WGTAssetID,
 		Amount:           amount,
 		TraceId:          bot.UuidNewV4().String(),
 		OpponentMultisig: om,

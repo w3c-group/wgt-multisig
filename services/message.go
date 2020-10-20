@@ -7,13 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"multisig/models"
 	"multisig/session"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/MixinNetwork/bot-api-go-client"
+	bot "github.com/MixinNetwork/bot-api-go-client"
 	"github.com/gofrs/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -106,11 +108,34 @@ func (service *MessageService) loop(ctx context.Context) error {
 			return nil
 		case msg := <-mc.ReadBuffer:
 			if strings.Contains(msg.Category, "PLAIN_") {
-				codeID, err := models.HandleMessage(ctx, msg.UserID)
-				if err != nil {
+				var msgData []byte
+				var err error
+				if msgData, err = base64.StdEncoding.DecodeString(msg.Data); err != nil {
+					log.Panicf("Error: %s\n", err)
 					return err
 				}
-				data := fmt.Sprintf("CNB will be refund: mixin://codes/%s", codeID)
+				data := fmt.Sprintf("WGT Multisig Operation\n\n1. in [amount] (Deposit WGT, such as `in 1.88`)\nPayment created before will be processed first.\n\n2. stop (Stop own node)\n\n3. start (Start own node)")
+
+				inst := string(msgData)
+				instList := strings.Split(inst, " ")
+				if len(instList) > 1 {
+					if instList[0] == "in" {
+						amount := instList[1]
+						_, err := strconv.ParseFloat(amount, 64)
+						if err == nil {
+							codeID, err := models.HandleMessage(ctx, msg.UserID, amount)
+							if err != nil {
+								return err
+							}
+							data = fmt.Sprintf("Deposit %sWGT: mixin://codes/%s", amount, codeID)
+						}
+					}
+					// if instList[0] == "stop" && {
+					// }
+					// if instList[0] == "start" && {
+					// }
+				}
+
 				params := map[string]interface{}{
 					"conversation_id": msg.ConversationID,
 					"message_id":      uuid.Must(uuid.NewV4()).String(),
@@ -297,24 +322,4 @@ func (m *tmap) set(key string, t mixinTransaction) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.m[key] = t
-}
-
-func sendAppButton(ctx context.Context, mc *MessageContext, msg MessageView, appID string) error {
-	btns, err := json.Marshal([]interface{}{
-		map[string]string{
-			"label":  "Transfer 1 CNB, will be refunded",
-			"action": fmt.Sprintf("https://mixin.one/pay?recipient=%s&asset=%s&amount=1&trace=%s&memo=", appID, models.CNBAssetID, bot.UuidNewV4().String()),
-			"color":  "#FF5733",
-		},
-	})
-	if err != nil {
-		return err
-	}
-	params := map[string]interface{}{
-		"conversation_id": msg.ConversationID,
-		"message_id":      bot.UuidNewV4().String(),
-		"category":        "APP_BUTTON_GROUP",
-		"data":            base64.StdEncoding.EncodeToString(btns),
-	}
-	return writeMessageAndWait(ctx, mc, "CREATE_MESSAGE", params)
 }

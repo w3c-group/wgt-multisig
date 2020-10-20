@@ -32,9 +32,11 @@ func main() {
 
 		message := &services.MessageService{}
 		go message.Run(ctx)
+		go models.EndpointRun(ctx)
 
 		go models.LoopingPendingPayments(ctx)
 		go models.LoopingPaidPayments(ctx)
+		go models.LoopingApprove(ctx)
 	}
 	models.LoopingSignMultisig(ctx)
 }
